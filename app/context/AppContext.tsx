@@ -1,109 +1,176 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-
-// Simple product type
-export interface Product {
-  id: string;
-  name: string;
-  price: number;
-  rating: number;
-  image: string;
-  description: string;
-  category: string;
-  fastDelivery: boolean;
-}
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Product, Category, CartItem, Cart } from '../../types';
+import { productAPI, categoryAPI, cartAPI } from '../../services/api';
 
 // Create context
 const AppContext = createContext<any>(undefined);
 
 // Provider component
 export const AppProvider = ({ children }: { children: ReactNode }) => {
-  // Dummy Products Data - Simple version
-  const [products] = useState<Product[]>([
-    {
-      id: '1',
-      name: 'Wireless Headphones',
-      price: 99.99,
-      rating: 4.5,
-      image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=150',
-      description: 'High-quality wireless headphones',
-      category: 'electronics',
-      fastDelivery: true
-    },
-    {
-      id: '2',
-      name: 'Smart Watch',
-      price: 199.99,
-      rating: 4.3,
-      image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=150',
-      description: 'Advanced smartwatch',
-      category: 'electronics',
-      fastDelivery: true
-    },
-    {
-      id: '3',
-      name: 'Gaming Mouse',
-      price: 49.99,
-      rating: 4.7,
-      image: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=150',
-      description: 'RGB gaming mouse',
-      category: 'electronics',
-      fastDelivery: false
-    },
-    {
-      id: '4',
-      name: 'Cotton T-Shirt',
-      price: 19.99,
-      rating: 4.2,
-      image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=150',
-      description: 'Comfortable cotton t-shirt',
-      category: 'fashion',
-      fastDelivery: true
-    },
-    {
-      id: '5',
-      name: 'Programming Book',
-      price: 29.99,
-      rating: 4.8,
-      image: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=150',
-      description: 'Complete programming guide',
-      category: 'books',
-      fastDelivery: false
-    },
-    {
-      id: '6',
-      name: 'Water Bottle',
-      price: 24.99,
-      rating: 4.1,
-      image: 'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=150',
-      description: 'Eco-friendly bottle',
-      category: 'home',
-      fastDelivery: true
-    }
-  ]);
-
-  const [cart, setCart] = useState<any[]>([]);
-  const [wishlist, setWishlist] = useState<any[]>([]);
+  // State management
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cartData, setCartData] = useState<Cart | null>(null);
+  const [wishlist, setWishlist] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Loading states
+  const [loading, setLoading] = useState({
+    products: false,
+    categories: false,
+    cart: false,
+  });
+  
+  const [error, setError] = useState<string | null>(null);
 
-  // Simple functions
-  const addToCart = (product: Product) => {
-    setCart(current => {
-      const existing = current.find(item => item.product.id === product.id);
-      if (existing) {
-        return current.map(item =>
-          item.product.id === product.id 
-            ? { ...item, quantity: item.quantity + 1 } 
-            : item
-        );
+  // Fetch all categories on mount
+  useEffect(() => {
+    fetchCategories();
+    fetchCart();
+  }, []);
+
+  // Fetch categories
+  const fetchCategories = async () => {
+    try {
+      setLoading(prev => ({ ...prev, categories: true }));
+      setError(null);
+      const data = await categoryAPI.getAll();
+      setCategories(Array.isArray(data) ? data : (data.categories || []));
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching categories:', err);
+    } finally {
+      setLoading(prev => ({ ...prev, categories: false }));
+    }
+  };
+
+  // Fetch products by category
+  const fetchProductsByCategory = async (categoryId?: string) => {
+    try {
+      setLoading(prev => ({ ...prev, products: true }));
+      setError(null);
+      const data = await productAPI.getByCategory(categoryId);
+      const productsList = Array.isArray(data) ? data : (data.products || []);
+      setProducts(productsList);
+      return productsList;
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching products by category:', err);
+      return [];
+    } finally {
+      setLoading(prev => ({ ...prev, products: false }));
+    }
+  };
+
+  // Fetch products by speciality
+  const fetchProductsBySpeciality = async (specialityId?: string) => {
+    try {
+      setLoading(prev => ({ ...prev, products: true }));
+      setError(null);
+      const data = await productAPI.getBySpeciality(specialityId);
+      const productsList = Array.isArray(data) ? data : (data.products || []);
+      setProducts(productsList);
+      return productsList;
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching products by speciality:', err);
+      return [];
+    } finally {
+      setLoading(prev => ({ ...prev, products: false }));
+    }
+  };
+
+  // Fetch new products
+  const fetchNewProducts = async () => {
+    try {
+      setLoading(prev => ({ ...prev, products: true }));
+      setError(null);
+      const data = await productAPI.getNew();
+      const productsList = Array.isArray(data) ? data : (data.products || []);
+      setProducts(productsList);
+      return productsList;
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching new products:', err);
+      return [];
+    } finally {
+      setLoading(prev => ({ ...prev, products: false }));
+    }
+  };
+
+  // Fetch sale products
+  const fetchSaleProducts = async () => {
+    try {
+      setLoading(prev => ({ ...prev, products: true }));
+      setError(null);
+      const data = await productAPI.getSale();
+      const productsList = Array.isArray(data) ? data : (data.products || []);
+      setProducts(productsList);
+      return productsList;
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching sale products:', err);
+      return [];
+    } finally {
+      setLoading(prev => ({ ...prev, products: false }));
+    }
+  };
+
+  // Fetch cart
+  const fetchCart = async () => {
+    try {
+      setLoading(prev => ({ ...prev, cart: true }));
+      setError(null);
+      const data = await cartAPI.get();
+      if (data && data.items) {
+        setCart(data.items);
+        setCartData(data);
+      } else if (Array.isArray(data)) {
+        setCart(data);
+      } else {
+        // If no data, set empty cart
+        setCart([]);
+        setCartData({ items: [], subtotal: 0, shipping: 0, total: 0 });
       }
-      return [...current, { product, quantity: 1 }];
-    });
+    } catch (err: any) {
+      // Don't show error for cart if endpoint doesn't exist yet
+      // Just set empty cart
+      console.warn('Cart API not available, using empty cart:', err.message);
+      setCart([]);
+      setCartData({ items: [], subtotal: 0, shipping: 0, total: 0 });
+    } finally {
+      setLoading(prev => ({ ...prev, cart: false }));
+    }
   };
 
-  const removeFromCart = (productId: string) => {
-    setCart(current => current.filter(item => item.product.id !== productId));
+  // Add to cart
+  const addToCart = async (product: Product, quantity: number = 1) => {
+    try {
+      setError(null);
+      await cartAPI.add(product.id, quantity);
+      // Refresh cart after adding
+      await fetchCart();
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    }
   };
 
+  // Remove from cart
+  const removeFromCart = async (productId: string) => {
+    try {
+      setError(null);
+      await cartAPI.remove(productId);
+      // Refresh cart after removing
+      await fetchCart();
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    }
+  };
+
+  // Add to wishlist (local only)
   const addToWishlist = (product: Product) => {
     setWishlist(current => {
       if (current.find(item => item.id === product.id)) return current;
@@ -111,20 +178,39 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
   };
 
+  // Remove from wishlist (local only)
   const removeFromWishlist = (productId: string) => {
     setWishlist(current => current.filter(item => item.id !== productId));
   };
 
   const value = {
+    // Data
     products,
+    categories,
     cart,
+    cartData,
     wishlist,
     searchQuery,
+    
+    // Loading states
+    loading,
+    error,
+    
+    // Setters
     setSearchQuery,
+    setProducts,
+    
+    // Functions
+    fetchProductsByCategory,
+    fetchProductsBySpeciality,
+    fetchNewProducts,
+    fetchSaleProducts,
+    fetchCategories,
+    fetchCart,
     addToCart,
     removeFromCart,
     addToWishlist,
-    removeFromWishlist
+    removeFromWishlist,
   };
 
   return (

@@ -1,23 +1,34 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
-  Image,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useAppContext } from '../context/AppContext';
+import { SafeImage } from '../../components/common/SafeImage';
+import { orderAPI } from '../../services/api';
 
 export default function CartScreen() {
-  const { cart, removeFromCart } = useAppContext();
+  const { cart, cartData, removeFromCart, fetchCart, loading } = useAppContext();
 
-  const subtotal = cart.reduce((total, item) => total + (item.product.price * item.quantity), 0);
-  const shipping = 5.99;
-  const total = subtotal + shipping;
+  useEffect(() => {
+    fetchCart();
+  }, []);
+
+  const subtotal = cartData?.subtotal || cart.reduce((total, item) => {
+    const price = item.product?.price || item.price || 0;
+    const qty = item.quantity || 1;
+    return total + (price * qty);
+  }, 0);
+  const shipping = cartData?.shipping || 0;
+  const total = cartData?.total || (subtotal + shipping);
 
   if (cart.length === 0) {
     return (
@@ -46,26 +57,53 @@ export default function CartScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView style={styles.content}>
-        {cart.map(item => (
-          <View key={item.product.id} style={styles.cartItem}>
-            <Image source={{ uri: item.product.image }} style={styles.itemImage} />
-            <View style={styles.itemDetails}>
-              <Text style={styles.itemName}>{item.product.name}</Text>
-              <Text style={styles.itemPrice}>${item.product.price.toFixed(2)}</Text>
-              <View style={styles.quantityContainer}>
-                <Text style={styles.quantity}>Qty: {item.quantity}</Text>
+      {loading.cart ? (
+        <View style={styles.loaderContainer}>
+          <ActivityIndicator size="large" color="#FFA41C" />
+          <Text style={styles.loadingText}>Loading cart...</Text>
+        </View>
+      ) : (
+        <ScrollView style={styles.content}>
+          {cart.map((item, index) => {
+            const product = item.product || item;
+            const productId = product.id || item.product_id || item.id;
+            const productName = product.name || product.title || 'Product';
+            const productImage = product.image || product.images?.[0] || null;
+            const productPrice = product.price || item.price || 0;
+            const quantity = item.quantity || 1;
+
+            return (
+              <View key={productId || index} style={styles.cartItem}>
+                <SafeImage 
+                  source={{ uri: productImage }} 
+                  style={styles.itemImage}
+                  showPlaceholder={true}
+                />
+                <View style={styles.itemDetails}>
+                  <Text style={styles.itemName}>{productName}</Text>
+                  <Text style={styles.itemPrice}>${productPrice.toFixed(2)}</Text>
+                  <View style={styles.quantityContainer}>
+                    <Text style={styles.quantity}>Qty: {quantity}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity 
+                  style={styles.deleteButton}
+                  onPress={async () => {
+                    try {
+                      await removeFromCart(productId);
+                      Alert.alert('Success', 'Product removed from cart');
+                    } catch (err: any) {
+                      Alert.alert('Error', err.message || 'Failed to remove product');
+                    }
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={20} color="#B12704" />
+                </TouchableOpacity>
               </View>
-            </View>
-            <TouchableOpacity 
-              style={styles.deleteButton}
-              onPress={() => removeFromCart(item.product.id)}
-            >
-              <Ionicons name="trash-outline" size={20} color="#B12704" />
-            </TouchableOpacity>
-          </View>
-        ))}
-      </ScrollView>
+            );
+          })}
+        </ScrollView>
+      )}
 
       <View style={styles.footer}>
         <View style={styles.totalContainer}>
@@ -83,7 +121,19 @@ export default function CartScreen() {
           </View>
         </View>
         
-        <TouchableOpacity style={styles.checkoutButton}>
+        <TouchableOpacity 
+          style={styles.checkoutButton}
+          onPress={async () => {
+            try {
+              const order = await orderAPI.create();
+              Alert.alert('Success', 'Order created successfully!', [
+                { text: 'OK', onPress: () => router.push(`/orders/${order.id || order.order_id}`) }
+              ]);
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to create order');
+            }
+          }}
+        >
           <Text style={styles.checkoutText}>Proceed to Checkout</Text>
         </TouchableOpacity>
       </View>
@@ -224,5 +274,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#131921',
+  },
+  loaderContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#666',
   },
 });

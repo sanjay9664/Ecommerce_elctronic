@@ -10,13 +10,12 @@ import {
   Alert,
   Dimensions,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
-// import { productAPI, categoryAPI, processProductData, processCategoryData } from '../../services/api';
 import { productAPI, categoryAPI, processProductData, processCategoryData } from '../../../services/api';
-// import { SafeImage } from '../../components/common/SafeImage';
 import { SafeImage } from '../../../components/common/SafeImage';
 
 const { width } = Dimensions.get('window');
@@ -25,10 +24,16 @@ export default function CategoryDetailScreen() {
   const { id, categoryName } = useLocalSearchParams<{ id: string; categoryName: string }>();
   const [category, setCategory] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
+  const [filteredProducts, setFilteredProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [sortBy, setSortBy] = useState<'name' | 'price-low' | 'price-high' | 'rating'>('name');
+  const [filterRating, setFilterRating] = useState(0);
+  const [showOnlyDiscounted, setShowOnlyDiscounted] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -36,11 +41,14 @@ export default function CategoryDetailScreen() {
     }
   }, [id]);
 
+  useEffect(() => {
+    applyFiltersAndSort();
+  }, [products, sortBy, filterRating, showOnlyDiscounted]);
+
   const fetchCategoryData = async () => {
     try {
       setLoading(true);
       setError(null);
-      console.log(`📋 Fetching data for category ID: ${id}`);
       
       // Try to fetch category details first
       try {
@@ -94,6 +102,49 @@ export default function CategoryDetailScreen() {
     }
   };
 
+  const applyFiltersAndSort = () => {
+    let filtered = [...products];
+
+    // Apply rating filter
+    if (filterRating > 0) {
+      filtered = filtered.filter(product => (product.rating || 0) >= filterRating);
+    }
+
+    // Apply discount filter
+    if (showOnlyDiscounted) {
+      filtered = filtered.filter(product => (product.discount_percentage || 0) > 0);
+    }
+
+    // Apply sorting
+    switch (sortBy) {
+      case 'price-low':
+        filtered.sort((a, b) => {
+          const priceA = a.offer_price > 0 ? a.offer_price : a.price;
+          const priceB = b.offer_price > 0 ? b.offer_price : b.price;
+          return priceA - priceB;
+        });
+        break;
+      case 'price-high':
+        filtered.sort((a, b) => {
+          const priceA = a.offer_price > 0 ? a.offer_price : a.price;
+          const priceB = b.offer_price > 0 ? b.offer_price : b.price;
+          return priceB - priceA;
+        });
+        break;
+      case 'rating':
+        filtered.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+        break;
+      case 'name':
+      default:
+        filtered.sort((a, b) => 
+          (a.name || a.title || '').localeCompare(b.name || b.title || '')
+        );
+        break;
+    }
+
+    setFilteredProducts(filtered);
+  };
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchCategoryData();
@@ -101,7 +152,7 @@ export default function CategoryDetailScreen() {
 
   const handleAddToCart = (product: any) => {
     const productName = product.name || product.title || 'Product';
-    Alert.alert('Added to Cart', `${productName} has been added to your cart`);
+    Alert.alert('Added to Cart', `${productName} added to your cart`);
   };
 
   const handleViewProduct = (productId: string) => {
@@ -109,6 +160,8 @@ export default function CategoryDetailScreen() {
   };
 
   const renderProductGrid = ({ item }: any) => {
+    if (!item) return null;
+    
     const displayPrice = item.offer_price > 0 ? item.offer_price : item.price;
     const hasDiscount = item.discount_percentage > 0;
     
@@ -159,6 +212,8 @@ export default function CategoryDetailScreen() {
   };
 
   const renderProductList = ({ item }: any) => {
+    if (!item) return null;
+    
     const displayPrice = item.offer_price > 0 ? item.offer_price : item.price;
     const hasDiscount = item.discount_percentage > 0;
     
@@ -215,6 +270,117 @@ export default function CategoryDetailScreen() {
     );
   };
 
+  // Sort Modal
+  const SortModal = () => (
+    <Modal
+      visible={sortModalVisible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setSortModalVisible(false)}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlay}
+        onPress={() => setSortModalVisible(false)}
+        activeOpacity={1}
+      >
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Sort By</Text>
+          
+          {[
+            { key: 'name', label: 'Name (A-Z)' },
+            { key: 'price-low', label: 'Price: Low to High' },
+            { key: 'price-high', label: 'Price: High to Low' },
+            { key: 'rating', label: 'Rating' },
+          ].map(option => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.modalOption,
+                sortBy === option.key && styles.modalOptionSelected
+              ]}
+              onPress={() => {
+                setSortBy(option.key as any);
+                setSortModalVisible(false);
+              }}
+            >
+              <Text style={[
+                styles.modalOptionText,
+                sortBy === option.key && styles.modalOptionTextSelected
+              ]}>
+                {option.label}
+              </Text>
+              {sortBy === option.key && (
+                <Ionicons name="checkmark" size={20} color="#FF9900" />
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  // Filter Modal
+  const FilterModal = () => (
+    <Modal
+      visible={filterModalVisible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setFilterModalVisible(false)}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlay}
+        onPress={() => setFilterModalVisible(false)}
+        activeOpacity={1}
+      >
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Filter Options</Text>
+          
+          <Text style={styles.filterSectionTitle}>Minimum Rating</Text>
+          <View style={styles.ratingFilterContainer}>
+            {[0, 1, 2, 3, 4, 5].map(rating => (
+              <TouchableOpacity
+                key={rating}
+                style={[
+                  styles.ratingOption,
+                  filterRating === rating && styles.ratingOptionSelected
+                ]}
+                onPress={() => setFilterRating(rating)}
+              >
+                <Text style={styles.ratingOptionText}>
+                  {rating === 0 ? 'All' : `${rating}+ ⭐`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.filterSectionTitle}>Other Filters</Text>
+          <TouchableOpacity
+            style={styles.filterOption}
+            onPress={() => setShowOnlyDiscounted(!showOnlyDiscounted)}
+          >
+            <Ionicons 
+              name={showOnlyDiscounted ? "checkbox" : "square-outline"} 
+              size={24} 
+              color="#FF9900" 
+            />
+            <Text style={styles.filterOptionText}>Show only discounted items</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.modalButton}
+            onPress={() => {
+              setFilterRating(0);
+              setShowOnlyDiscounted(false);
+              setFilterModalVisible(false);
+            }}
+          >
+            <Text style={styles.modalButtonText}>Clear Filters</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   if (loading && !refreshing) {
     return (
       <SafeAreaView style={styles.container}>
@@ -252,14 +418,26 @@ export default function CategoryDetailScreen() {
           <Text style={styles.headerTitle} numberOfLines={1}>
             {category?.name || categoryName || 'Category'}
           </Text>
-          {products.length > 0 && (
+          {filteredProducts.length > 0 && (
             <Text style={styles.headerSubtitle}>
-              {products.length} products
+              {filteredProducts.length} products
             </Text>
           )}
         </View>
         
         <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => setFilterModalVisible(true)}
+          >
+            <Ionicons name="filter" size={24} color="#666" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => setSortModalVisible(true)}
+          >
+            <Ionicons name="swap-vertical" size={24} color="#666" />
+          </TouchableOpacity>
           <TouchableOpacity 
             style={styles.viewModeButton}
             onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
@@ -295,9 +473,9 @@ export default function CategoryDetailScreen() {
 
       {/* Products */}
       <FlatList
-        data={products}
+        data={filteredProducts}
         renderItem={viewMode === 'grid' ? renderProductGrid : renderProductList}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item?.id?.toString() || Math.random().toString()}
         numColumns={viewMode === 'grid' ? 2 : 1}
         contentContainerStyle={styles.productsList}
         refreshControl={
@@ -306,29 +484,46 @@ export default function CategoryDetailScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="cube-outline" size={60} color="#ccc" />
-            <Text style={styles.emptyText}>No products found in this category</Text>
+            <Text style={styles.emptyText}>No products found</Text>
             <TouchableOpacity style={styles.shopButton} onPress={() => router.push('/(tabs)')}>
               <Text style={styles.shopButtonText}>Browse All Products</Text>
             </TouchableOpacity>
           </View>
         }
         ListHeaderComponent={
-          products.length > 0 && (
+          filteredProducts.length > 0 && (
             <View style={styles.resultsHeader}>
               <Text style={styles.resultsText}>
-                Showing {products.length} product{products.length !== 1 ? 's' : ''}
+                Showing {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''}
               </Text>
-              <TouchableOpacity 
-                style={styles.filterButton}
-                onPress={() => Alert.alert('Filter', 'Filter options coming soon!')}
-              >
-                <Ionicons name="filter" size={20} color="#666" />
-                <Text style={styles.filterText}>Filter</Text>
-              </TouchableOpacity>
+              {(filterRating > 0 || showOnlyDiscounted) && (
+                <View style={styles.activeFilters}>
+                  {filterRating > 0 && (
+                    <View style={styles.filterChip}>
+                      <Text style={styles.filterChipText}>{filterRating}+ ⭐</Text>
+                      <TouchableOpacity onPress={() => setFilterRating(0)}>
+                        <Ionicons name="close" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {showOnlyDiscounted && (
+                    <View style={styles.filterChip}>
+                      <Text style={styles.filterChipText}>On Sale</Text>
+                      <TouchableOpacity onPress={() => setShowOnlyDiscounted(false)}>
+                        <Ionicons name="close" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )
         }
       />
+
+      {/* Modals */}
+      <SortModal />
+      <FilterModal />
     </SafeAreaView>
   );
 }
@@ -364,8 +559,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  headerButton: {
+    padding: 8,
+    marginLeft: 5,
+  },
   viewModeButton: {
-    padding: 5,
+    padding: 8,
+    marginLeft: 5,
   },
   categoryBanner: {
     position: 'relative',
@@ -398,31 +598,32 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   resultsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: 15,
     paddingVertical: 10,
-    backgroundColor: '#f8f9fa',
   },
   resultsText: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 8,
   },
-  filterButton: {
+  activeFilters: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: '#fff',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    backgroundColor: '#FF9900',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
   },
-  filterText: {
-    fontSize: 14,
-    color: '#666',
-    marginLeft: 5,
+  filterChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   productsList: {
     padding: 10,
@@ -629,5 +830,93 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 15,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  modalOptionSelected: {
+    backgroundColor: '#fff3e0',
+  },
+  modalOptionText: {
+    fontSize: 16,
+    color: '#131921',
+  },
+  modalOptionTextSelected: {
+    color: '#FF9900',
+    fontWeight: '600',
+  },
+  modalButton: {
+    backgroundColor: '#FF9900',
+    paddingVertical: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  filterSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  ratingFilterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  ratingOption: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff',
+  },
+  ratingOptionSelected: {
+    backgroundColor: '#FF9900',
+    borderColor: '#FF9900',
+  },
+  ratingOptionText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  filterOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 10,
+  },
+  filterOptionText: {
+    fontSize: 16,
+    color: '#131921',
   },
 });

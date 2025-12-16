@@ -1,7 +1,76 @@
+// app/tabs/_layout.tsx - POORA FILE YEH USE KAREIN
+import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { View, Text } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const CART_STORAGE_KEY = '@smartg5_cart';
 
 export default function TabLayout() {
+  const [cartItemCount, setCartItemCount] = useState(0);
+
+  // Load cart count on mount and whenever tab changes
+  useEffect(() => {
+    loadCartCount();
+    
+    // Refresh cart count every time tabs are focused
+    const interval = setInterval(loadCartCount, 2000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadCartCount = async () => {
+    try {
+      const savedCart = await AsyncStorage.getItem(CART_STORAGE_KEY);
+      if (savedCart) {
+        const cart = JSON.parse(savedCart);
+        const count = cart.reduce((total: number, item: any) => total + (item.quantity || 1), 0);
+        setCartItemCount(count);
+      } else {
+        setCartItemCount(0);
+      }
+    } catch (error) {
+      console.error('Error loading cart count:', error);
+    }
+  };
+
+  // Custom Cart Icon with Badge
+  const CartIcon = ({ color, size }: { color: string; size: number }) => {
+    return (
+      <View style={{ position: 'relative' }}>
+        <Ionicons name="cart-outline" size={size} color={color} />
+        {cartItemCount > 0 && (
+          <View
+            style={{
+              position: 'absolute',
+              top: -5,
+              right: -8,
+              backgroundColor: '#ff4757',
+              borderRadius: 10,
+              width: 18,
+              height: 18,
+              justifyContent: 'center',
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#fff',
+            }}
+          >
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 'bold',
+              }}
+            >
+              {cartItemCount > 9 ? '9+' : cartItemCount}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <Tabs
       screenOptions={{
@@ -16,10 +85,7 @@ export default function TabLayout() {
           fontSize: 12,
           fontWeight: '500',
         },
-        headerStyle: {
-          backgroundColor: '#131921',
-        },
-        headerTintColor: '#fff',
+        headerShown: false, // Remove default header
       }}
     >
       <Tabs.Screen
@@ -32,38 +98,30 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="all-products"
+        name="products"
         options={{
-          title: 'All Products',
+          title: 'Products',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="grid" size={size} color={color} />
+            <Ionicons name="cube" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="sale"
         options={{
-          title: '50% OFF',
+          title: 'Sale',
           tabBarIcon: ({ color, size }) => (
             <MaterialIcons name="local-offer" size={size} color={color} />
           ),
         }}
       />
-      <Tabs.Screen
-        name="famous"
-        options={{
-          title: 'Famous',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="trending-up" size={size} color={color} />
-          ),
-        }}
-      />
+      {/* IMPORTANT: Cart Tab Add Karein */}
       <Tabs.Screen
         name="cart"
         options={{
           title: 'Cart',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cart" size={size} color={color} />
+            <CartIcon color={color} size={size} />
           ),
         }}
       />

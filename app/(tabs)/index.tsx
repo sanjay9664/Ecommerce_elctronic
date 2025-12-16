@@ -11,16 +11,64 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Fixed imports - use relative paths
 import { productAPI, categoryAPI } from '../../services/api';
-import { SafeImage } from '../../components/common/SafeImage';
 
 const { width } = Dimensions.get('window');
+
+// Local storage keys
+const CART_STORAGE_KEY = '@smartg5_cart';
+const WISHLIST_STORAGE_KEY = '@smartg5_wishlist';
+
+// Safe Image Component to handle loading errors
+const SafeImage = ({ source, style, placeholder, resizeMode = 'cover' }) => {
+  const [imageError, setImageError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const handleError = () => {
+    console.log('Image failed to load:', source?.uri);
+    setImageError(true);
+    setLoading(false);
+  };
+
+  const handleLoad = () => {
+    setLoading(false);
+  };
+
+  // Return placeholder if no source or error
+  if (!source?.uri || imageError) {
+    return (
+      <View style={[style, styles.imagePlaceholder]}>
+        <Ionicons name="image-outline" size={30} color="#ccc" />
+        <Text style={styles.placeholderText}>{placeholder || 'No Image'}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={style}>
+      {loading && (
+        <View style={[styles.imageLoading, style]}>
+          <ActivityIndicator size="small" color="#FF9900" />
+        </View>
+      )}
+      <Image
+        source={source}
+        style={style}
+        resizeMode={resizeMode}
+        onError={handleError}
+        onLoad={handleLoad}
+      />
+    </View>
+  );
+};
 
 export default function HomeScreen() {
   // State for data
@@ -38,22 +86,269 @@ export default function HomeScreen() {
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [showWishlistProducts, setShowWishlistProducts] = useState(false);
 
-  // Header Menu Options
+  // Header Menu Options - Remove wishlist route
   const menuOptions = [
     { id: '1', name: 'My Profile', icon: 'person', route: '/(tabs)/profile' },
     { id: '2', name: 'My Orders', icon: 'receipt', route: '/orders' },
-    { id: '3', name: 'Wishlist', icon: 'heart', route: null },
-    { id: '4', name: 'Settings', icon: 'settings', route: null },
-    { id: '5', name: 'Customer Support', icon: 'headset', route: null },
+    { id: '3', name: 'Settings', icon: 'settings', route: null },
+    { id: '4', name: 'Customer Support', icon: 'headset', route: null },
   ];
 
-  // Fetch data on mount
+  // Load cart and wishlist from storage on mount
   useEffect(() => {
     console.log('🚀 HomeScreen mounted - fetching real data from API...');
-    fetchDataFromAPI();
+    loadInitialData();
   }, []);
 
+  // Reload cart when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('HomeScreen focused - reloading cart');
+      loadCartFromStorage();
+    }, [])
+  );
+
+  const loadInitialData = async () => {
+    await loadCartFromStorage();
+    await loadWishlistFromStorage();
+    fetchDataFromAPI();
+  };
+
+  // Load cart from AsyncStorage
+  const loadCartFromStorage = async () => {
+    try {
+      const savedCart = await AsyncStorage.getItem(CART_STORAGE_KEY);
+      console.log('Load cart - raw data:', savedCart);
+      
+      if (savedCart) {
+        try {
+          const parsedCart = JSON.parse(savedCart);
+          console.log('Home: Loaded cart from storage:', Array.isArray(parsedCart) ? parsedCart.length : 'invalid', 'items');
+          
+          if (Array.isArray(parsedCart)) {
+            setCart(parsedCart);
+          } else {
+            console.error('Cart data is not an array');
+            setCart([]);
+          }
+        } catch (parseError) {
+          console.error('Error parsing cart:', parseError);
+          setCart([]);
+        }
+      } else {
+        console.log('No cart found in storage');
+        setCart([]);
+      }
+    } catch (error) {
+      console.error('Error loading cart from storage:', error);
+      setCart([]);
+    }
+  };
+
+  // Save cart to AsyncStorage - FIXED: Proper error handling
+  const saveCartToStorage = async (cartData: any[]) => {
+    try {
+      console.log('Saving cart:', cartData);
+      
+      // Validate cartData
+      if (!Array.isArray(cartData)) {
+        console.error('Invalid cart data (not array):', cartData);
+        return;
+      }
+      
+      if (cartData.length === 0) {
+        // Remove item if cart is empty
+        await AsyncStorage.removeItem(CART_STORAGE_KEY);
+        console.log('Cart empty - removed from storage');
+        return;
+      }
+      
+      // Validate each item
+      const validCartData = cartData.filter(item => 
+        item && item.id && (item.name || item.title)
+      ).map(item => ({
+        id: item.id,
+        name: item.name || item.title || 'Product',
+        title: item.title || item.name || 'Product',
+        price: parseFloat(item.price) || 0,
+        offer_price: parseFloat(item.offer_price) || parseFloat(item.price) || 0,
+        quantity: parseInt(item.quantity) || 1,
+        image: item.image || item.images?.[0] || null,
+        description: item.description || '',
+        discount_percentage: item.discount_percentage || 0,
+        category: item.category || '',
+      }));
+      
+      await AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(validCartData));
+      console.log('Cart saved to storage:', validCartData.length, 'items');
+    } catch (error) {
+      console.error('Error saving cart to storage:', error);
+    }
+  };
+
+  // Load wishlist from AsyncStorage
+  const loadWishlistFromStorage = async () => {
+    try {
+      const savedWishlist = await AsyncStorage.getItem(WISHLIST_STORAGE_KEY);
+      if (savedWishlist) {
+        setWishlist(JSON.parse(savedWishlist));
+      }
+    } catch (error) {
+      console.error('Error loading wishlist from storage:', error);
+    }
+  };
+
+  // Save wishlist to AsyncStorage
+  const saveWishlistToStorage = async () => {
+    try {
+      await AsyncStorage.setItem(WISHLIST_STORAGE_KEY, JSON.stringify(wishlist));
+    } catch (error) {
+      console.error('Error saving wishlist to storage:', error);
+    }
+  };
+
+  // Calculate total cart items count
+  const getCartItemCount = () => {
+    if (!Array.isArray(cart)) return 0;
+    
+    const count = cart.reduce((total, item) => {
+      const quantity = item?.quantity || 1;
+      return total + quantity;
+    }, 0);
+    
+    console.log('Cart count calculated:', count, 'items in cart');
+    return count;
+  };
+
+  // Add to cart function - FIXED
+  const addToCart = (product: any, quantity: number = 1) => {
+    console.log('Adding to cart:', product?.name, 'quantity:', quantity);
+    
+    setCart(prevCart => {
+      if (!Array.isArray(prevCart)) {
+        console.error('prevCart is not an array:', prevCart);
+        return prevCart;
+      }
+      
+      const existingItem = prevCart.find(item => item.id === product.id);
+      let updatedCart;
+      
+      if (existingItem) {
+        // Update quantity if product already in cart
+        updatedCart = prevCart.map(item =>
+          item.id === product.id
+            ? { 
+                ...item, 
+                quantity: (parseInt(item.quantity) || 1) + quantity 
+              }
+            : item
+        );
+      } else {
+        // Add new product to cart
+        updatedCart = [...prevCart, { 
+          ...product, 
+          quantity: quantity,
+          offer_price: product.offer_price || product.price,
+          price: product.price || 0,
+          image: product.image || product.images?.[0] || null,
+          name: product.name || product.title || 'Product',
+          title: product.title || product.name || 'Product'
+        }];
+      }
+      
+      console.log('Updated cart before save:', updatedCart);
+      saveCartToStorage(updatedCart);
+      return updatedCart;
+    });
+  };
+
+  // Remove from cart function - FIXED
+  const removeFromCart = (productId: string) => {
+    console.log('Removing from cart:', productId);
+    
+    setCart(prevCart => {
+      if (!Array.isArray(prevCart)) {
+        console.error('prevCart is not an array:', prevCart);
+        return prevCart;
+      }
+      
+      const updatedCart = prevCart.filter(item => item.id !== productId);
+      console.log('After removal, cart:', updatedCart);
+      saveCartToStorage(updatedCart);
+      return updatedCart;
+    });
+  };
+
+  // Update cart quantity - FIXED
+  const updateCartQuantity = (productId: string, quantity: number) => {
+    console.log('Updating quantity:', productId, 'to', quantity);
+    
+    if (quantity <= 0) {
+      removeFromCart(productId);
+      return;
+    }
+    
+    setCart(prevCart => {
+      if (!Array.isArray(prevCart)) {
+        console.error('prevCart is not an array:', prevCart);
+        return prevCart;
+      }
+      
+      const updatedCart = prevCart.map(item =>
+        item.id === productId
+          ? { ...item, quantity: quantity }
+          : item
+      );
+      saveCartToStorage(updatedCart);
+      return updatedCart;
+    });
+  };
+
+  // Clear cart completely
+  const clearCart = async () => {
+    try {
+      console.log('Clearing cart completely');
+      setCart([]);
+      await AsyncStorage.removeItem(CART_STORAGE_KEY);
+      console.log('Cart cleared from storage');
+    } catch (error) {
+      console.error('Error clearing cart:', error);
+    }
+  };
+
+  // Add to wishlist function
+  const addToWishlist = (product: any) => {
+    setWishlist(prev => {
+      // Check if product is already in wishlist
+      if (prev.some(item => item.id === product.id)) {
+        return prev;
+      }
+      return [...prev, product];
+    });
+  };
+
+  // Remove from wishlist function
+  const removeFromWishlist = (productId: string) => {
+    setWishlist(prev => prev.filter(item => item.id !== productId));
+  };
+
+  // Toggle wishlist function
+  const toggleWishlist = (product: any) => {
+    if (wishlist.find(item => item.id === product.id)) {
+      removeFromWishlist(product.id);
+    } else {
+      addToWishlist(product);
+    }
+  };
+
+  // Show wishlist products directly
+  const handleHeartIconClick = () => {
+    setShowWishlistProducts(!showWishlistProducts);
+  };
+
+  // Fetch data on mount
   const fetchDataFromAPI = async () => {
     console.log('🌐 Starting real API calls...');
     
@@ -71,7 +366,7 @@ export default function HomeScreen() {
         // Handle your API response structure
         let categoriesArray = [];
         
-        if (categoriesResponse.status === true && categoriesResponse.data) {
+        if (categoriesResponse?.status === true && categoriesResponse?.data) {
           // Your API structure: { status: true, data: [...] }
           categoriesArray = categoriesResponse.data;
           console.log('📊 Categories from data property:', categoriesArray.length);
@@ -85,7 +380,7 @@ export default function HomeScreen() {
             if (category.products && Array.isArray(category.products)) {
               // Process each product in this category
               const categoryProducts = category.products.map((product: any) => {
-                // Build full image URL
+                // Build full image URL - FIXED: Remove extra space
                 const mainImage = product.main_image 
                   ? `https://smartg5.com/${product.main_image}`
                   : null;
@@ -104,7 +399,7 @@ export default function HomeScreen() {
                 }
                 
                 return {
-                  id: product.id.toString(),
+                  id: product.id?.toString() || Math.random().toString(),
                   name: product.name || 'Product',
                   title: product.name || 'Product',
                   price: parseFloat(product.price || 0),
@@ -112,7 +407,7 @@ export default function HomeScreen() {
                   image: mainImage,
                   images: galleryImages.length > 0 ? galleryImages : (mainImage ? [mainImage] : []),
                   category: category.name,
-                  category_id: category.id,
+                  category_id: category.id?.toString() || '',
                   slug: product.slug,
                   sku: product.sku,
                   description: product.description || '',
@@ -142,13 +437,13 @@ export default function HomeScreen() {
         
         // Clean categories data for display
         const cleanedCategories = categoriesArray.map((category: any) => {
-          // Build full image URL for category
+          // Build full image URL for category - FIXED: Remove extra space
           const categoryImage = category.image 
             ? `https://smartg5.com/${category.image}`
             : null;
           
           return {
-            id: category.id.toString(),
+            id: category.id?.toString() || Math.random().toString(),
             name: category.name || category.title || 'Category',
             icon: 'folder', // Default icon
             image: categoryImage,
@@ -179,7 +474,7 @@ export default function HomeScreen() {
           // Handle different response structures for products endpoint
           let productsArray = [];
           
-          if (productsResponse.status === true && productsResponse.data) {
+          if (productsResponse?.status === true && productsResponse?.data) {
             productsArray = productsResponse.data;
           } else if (Array.isArray(productsResponse)) {
             productsArray = productsResponse;
@@ -188,7 +483,7 @@ export default function HomeScreen() {
           // Process products if found
           if (productsArray.length > 0) {
             const processedProducts = productsArray.map((product: any) => {
-              // Build full image URL
+              // Build full image URL - FIXED: Remove extra space
               const mainImage = product.main_image || product.image;
               const fullImageUrl = mainImage 
                 ? `https://smartg5.com/${mainImage}`
@@ -251,47 +546,87 @@ export default function HomeScreen() {
 
   // Helper to get display price (offer price if available, otherwise regular price)
   const getDisplayPrice = (product: any) => {
-    if (product.offer_price && product.offer_price > 0) {
+    if (!product) return 0;
+    if (product?.offer_price && product.offer_price > 0) {
       return product.offer_price;
     }
-    return product.price || 0;
+    return product?.price || 0;
   };
 
-  // Search Functionality
+  // Search Functionality - FIXED
   const handleSearch = (text: string) => {
     setSearchQuery(text);
     if (text.length > 0) {
       setIsSearching(true);
-      const results = products.filter(product => {
-        const name = product.name || product.title || '';
-        return name.toLowerCase().includes(text.toLowerCase());
-      });
-      setSearchResults(results);
+      // FIX: Check if products array exists and is not empty
+      if (products && products.length > 0) {
+        const results = products.filter(product => {
+          if (!product) return false;
+          const name = product?.name || product?.title || '';
+          return name.toLowerCase().includes(text.toLowerCase());
+        });
+        setSearchResults(results);
+      } else {
+        setSearchResults([]);
+      }
     } else {
       setIsSearching(false);
       setSearchResults([]);
     }
   };
 
-  // Add to Cart with Alert
-  const handleAddToCart = async (product: any) => {
+  // Add to Cart with Alert - FIXED: Using local cart function
+  const handleAddToCart = (product: any) => {
     try {
-      const productName = product.name || product.title || 'Product';
+      if (!product) {
+        Alert.alert('Error', 'Product information is missing');
+        return;
+      }
+      addToCart(product);
+      const productName = product?.name || product?.title || 'Product';
       Alert.alert('Success', `${productName} added to cart!`);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to add product to cart');
     }
   };
 
-  // Toggle Wishlist
-  const toggleWishlist = (product: any) => {
-    const productName = product.name || product.title || 'Product';
-    if (wishlist.find(item => item.id === product.id)) {
-      setWishlist(prev => prev.filter(item => item.id !== product.id));
+  // Toggle Wishlist - FIXED: Using local wishlist function
+  const handleToggleWishlist = (product: any) => {
+    if (!product || !product.id) return;
+    
+    const productName = product?.name || product?.title || 'Product';
+    const isInWishlist = wishlist?.find(item => item?.id === product.id) || false;
+    
+    if (isInWishlist) {
+      removeFromWishlist(product.id);
       Alert.alert('Removed', `${productName} removed from wishlist`);
     } else {
-      setWishlist(prev => [...prev, product]);
+      addToWishlist(product);
       Alert.alert('Added', `${productName} added to wishlist`);
+    }
+  };
+
+  // Handle product click - FIXED
+  const handleProductClick = (product: any) => {
+    if (!product || !product.id) {
+      console.error('Product missing ID or invalid:', product);
+      Alert.alert('Error', 'Product information is incomplete');
+      return;
+    }
+    
+    console.log('Navigating to product detail:', product.id);
+    try {
+      // Pass the complete product data to the detail page
+      router.push({
+        pathname: '/product/[id]',
+        params: { 
+          id: product.id,
+          productData: JSON.stringify(product) // Pass entire product as JSON string
+        }
+      });
+    } catch (error) {
+      console.error('Navigation error:', error);
+      Alert.alert('Error', 'Failed to open product details');
     }
   };
 
@@ -299,7 +634,7 @@ export default function HomeScreen() {
   const renderCategory = ({ item }: any) => {
     // Map category names to icons
     const getCategoryIcon = (categoryName: string) => {
-      const name = categoryName.toLowerCase();
+      const name = categoryName?.toLowerCase() || '';
       if (name.includes('medical') || name.includes('equipment')) return 'medical-services';
       if (name.includes('hotel') || name.includes('smart')) return 'hotel';
       if (name.includes('supply') || name.includes('tool')) return 'build';
@@ -310,31 +645,38 @@ export default function HomeScreen() {
       return 'folder';
     };
     
-    const categoryIcon = getCategoryIcon(item.name);
-    const productCount = item.product_count || 0;
+    const categoryIcon = getCategoryIcon(item?.name);
+    const productCount = item?.product_count || 0;
     
     return (
       <TouchableOpacity 
         style={styles.categoryItem}
-        onPress={() => router.push({
-  pathname: '/(tabs)/category/[id]',
-  params: { 
-    id: item.id,
-    categoryName: item.name 
-  }
-})}
+        onPress={() => {
+          // FIXED: Safe navigation with proper error handling
+          if (item?.id && item?.name) {
+            router.push({
+              pathname: '/(tabs)/category/[id]',
+              params: { 
+                id: item.id,
+                categoryName: item.name 
+              }
+            });
+          } else {
+            console.error('Category item missing required fields:', item);
+            Alert.alert('Error', 'Category information is incomplete');
+          }
+        }}
       >
-        {item.image ? (
+        {item?.image ? (
           <SafeImage 
             source={{ uri: item.image }}
             style={styles.categoryIconImage}
-            showPlaceholder={true}
             placeholder={item.name}
           />
         ) : (
           <MaterialIcons name={categoryIcon as any} size={32} color="#FF9900" />
         )}
-        <Text style={styles.categoryText} numberOfLines={2}>{item.name}</Text>
+        <Text style={styles.categoryText} numberOfLines={2}>{item?.name || 'Category'}</Text>
         {productCount > 0 && (
           <Text style={styles.categoryCount}>{productCount} items</Text>
         )}
@@ -342,37 +684,43 @@ export default function HomeScreen() {
     );
   };
 
-  // Render Product Card
+  // Render Product Card - FIXED
   const renderProduct = ({ item }: any) => {
-    const productName = item.name || item.title || 'Product';
-    const productImage = item.image || item.images?.[0] || null;
-    const productRating = item.rating || 0;
+    if (!item) return null;
+    
+    const productName = item?.name || item?.title || 'Product';
+    const productImage = item?.image || item?.images?.[0] || null;
+    const productRating = item?.rating || 0;
     const displayPrice = getDisplayPrice(item);
-    const regularPrice = item.price || 0;
-    const discount = item.discount_percentage || item.discount || 0;
+    const regularPrice = item?.price || 0;
+    const discount = item?.discount_percentage || item?.discount || 0;
     const hasDiscount = discount > 0 && displayPrice < regularPrice;
+    const isInWishlist = wishlist?.some(w => w?.id === item?.id) || false;
     
     return (
       <TouchableOpacity 
         style={styles.productCard}
-        onPress={() => router.push(`/product/${item.id}`)}
+        onPress={() => handleProductClick(item)}
       >
         <SafeImage 
           source={{ uri: productImage }} 
           style={styles.productImage}
-          showPlaceholder={true}
           placeholder="Product Image"
+          resizeMode="cover"
         />
         
         {/* Wishlist Button */}
         <TouchableOpacity 
           style={styles.wishlistButton}
-          onPress={() => toggleWishlist(item)}
+          onPress={(e) => {
+            e.stopPropagation(); // Prevent product card click
+            handleToggleWishlist(item);
+          }}
         >
           <Ionicons 
-            name={wishlist.find(p => p.id === item.id) ? "heart" : "heart-outline"} 
+            name={isInWishlist ? "heart" : "heart-outline"} 
             size={20} 
-            color={wishlist.find(p => p.id === item.id) ? "red" : "#666"} 
+            color={isInWishlist ? "red" : "#666"} 
           />
         </TouchableOpacity>
 
@@ -400,14 +748,14 @@ export default function HomeScreen() {
         </View>
         
         {/* Fast Delivery Badge */}
-        {item.fastDelivery && (
+        {item?.fastDelivery && (
           <View style={styles.fastDeliveryBadge}>
             <Text style={styles.fastDeliveryText}>🚚 Fast Delivery</Text>
           </View>
         )}
         
         {/* Category Badge */}
-        {item.category && (
+        {item?.category && (
           <View style={styles.categoryBadge}>
             <Text style={styles.categoryBadgeText}>{item.category}</Text>
           </View>
@@ -415,7 +763,10 @@ export default function HomeScreen() {
         
         <TouchableOpacity 
           style={styles.addToCartBtn}
-          onPress={() => handleAddToCart(item)}
+          onPress={(e) => {
+            e.stopPropagation(); // Prevent product card click
+            handleAddToCart(item);
+          }}
         >
           <Text style={styles.addToCartText}>Add to Cart</Text>
         </TouchableOpacity>
@@ -423,41 +774,57 @@ export default function HomeScreen() {
     );
   };
 
+  // Calculate cart item count
+  const cartItemCount = getCartItemCount();
+  console.log('Current cart item count for display:', cartItemCount);
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
+      {/* Beautiful Header - REMOVED DEBUG ICON */}
       <View style={styles.header}>
         {/* Menu Button */}
         <TouchableOpacity onPress={() => setIsMenuVisible(true)}>
           <Ionicons name="menu" size={24} color="#fff" />
         </TouchableOpacity>
         
-        {/* Logo */}
-        <Text style={styles.logo}>🏠 SmartG5 Store</Text>
+        {/* Enhanced Logo */}
+        <View style={styles.logoContainer}>
+          <Text style={styles.logo}>🏨</Text>
+          <Text style={styles.logoText}>SmartG5</Text>
+        </View>
         
-        {/* Header Icons */}
+        {/* Header Icons - ONLY KEEP WISHLIST AND CART */}
         <View style={styles.headerIcons}>
           <TouchableOpacity 
             style={styles.iconButton}
-            onPress={() => Alert.alert('Wishlist', 'Wishlist feature coming soon!')}
+            onPress={handleHeartIconClick}
           >
-            <Ionicons name="heart-outline" size={24} color="#fff" />
+            <Ionicons 
+              name={showWishlistProducts ? "heart" : "heart-outline"} 
+              size={24} 
+              color="#fff" 
+            />
             {wishlist.length > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{wishlist.length}</Text>
+                <Text style={styles.badgeText}>
+                  {wishlist.length > 9 ? '9+' : wishlist.length}
+                </Text>
               </View>
             )}
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={styles.iconButton}
-            onPress={() => router.push('/(tabs)/cart')}
+            onPress={() => {
+              console.log('Cart icon clicked, current count:', cartItemCount);
+              router.push('/(tabs)/cart');
+            }}
           >
             <Ionicons name="cart-outline" size={24} color="#fff" />
-            {cart.length > 0 && (
+            {cartItemCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>
-                  {cart.reduce((total, item) => total + (item.quantity || 0), 0)}
+                  {cartItemCount > 9 ? '9+' : cartItemCount}
                 </Text>
               </View>
             )}
@@ -465,8 +832,9 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Search Bar */}
+      {/* Enhanced Search Bar */}
       <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search products..."
@@ -474,57 +842,101 @@ export default function HomeScreen() {
           value={searchQuery}
           onChangeText={handleSearch}
         />
-        <TouchableOpacity style={styles.searchButton}>
-          <Ionicons name="search" size={20} color="#666" />
-        </TouchableOpacity>
+        {searchQuery.length > 0 && (
+          <TouchableOpacity 
+            style={styles.clearButton}
+            onPress={() => {
+              setSearchQuery('');
+              setIsSearching(false);
+              setSearchResults([]);
+            }}
+          >
+            <Ionicons name="close-circle" size={20} color="#666" />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Refresh Button */}
-      <TouchableOpacity 
-        style={styles.refreshButton}
-        onPress={fetchDataFromAPI}
-      >
-        <Ionicons name="refresh" size={20} color="#fff" />
-        <Text style={styles.refreshButtonText}>Refresh Data</Text>
-      </TouchableOpacity>
-
-      {/* Search Results */}
-      {isSearching && searchResults.length > 0 && (
-        <View style={styles.searchResultsContainer}>
-          <Text style={styles.searchResultsTitle}>Search Results ({searchResults.length})</Text>
-          {searchResults.map(product => {
-            const productName = product.name || product.title || 'Product';
-            const productImage = product.image || product.images?.[0] || null;
-            const displayPrice = getDisplayPrice(product);
-            return (
-              <TouchableOpacity 
-                key={product.id} 
-                style={styles.searchResultItem}
-                onPress={() => {
-                  router.push(`/product/${product.id}`);
-                  setIsSearching(false);
-                  setSearchQuery('');
-                }}
-              >
-                <SafeImage 
-                  source={{ uri: productImage }} 
-                  style={styles.searchResultImage}
-                  showPlaceholder={true}
-                />
-                <View style={styles.searchResultInfo}>
-                  <Text style={styles.searchResultName}>{productName}</Text>
-                  <Text style={styles.searchResultPrice}>${formatPrice(displayPrice)}</Text>
-                  {product.category && (
-                    <Text style={styles.searchResultCategory}>{product.category}</Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+      {/* Wishlist Products Section */}
+      {showWishlistProducts && (
+        <View style={styles.wishlistSection}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>❤️ My Wishlist ({wishlist.length})</Text>
+            <TouchableOpacity onPress={() => setShowWishlistProducts(false)}>
+              <Text style={styles.closeText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {wishlist.length === 0 ? (
+            <View style={styles.emptyWishlist}>
+              <Ionicons name="heart-outline" size={60} color="#ccc" />
+              <Text style={styles.emptyWishlistText}>Your wishlist is empty</Text>
+              <Text style={styles.emptyWishlistSubtext}>Click heart icon on products to add them here</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={wishlist}
+              renderItem={renderProduct}
+              keyExtractor={item => item?.id?.toString() || Math.random().toString()}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.wishlistProductsList}
+            />
+          )}
         </View>
       )}
 
-      {!isSearching && (
+      {/* Search Results - FIXED */}
+      {isSearching && (
+        <View style={styles.searchResultsContainer}>
+          <Text style={styles.searchResultsTitle}>
+            Search Results ({searchResults.length})
+          </Text>
+          {searchResults.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={40} color="#ccc" />
+              <Text style={styles.emptyText}>No products found</Text>
+            </View>
+          ) : (
+            searchResults.map((product, index) => {
+              if (!product) return null;
+              const productName = product?.name || product?.title || 'Product';
+              const productImage = product?.image || product?.images?.[0] || null;
+              const displayPrice = getDisplayPrice(product);
+              
+              return (
+                <TouchableOpacity 
+                  key={product?.id?.toString() || index.toString()}
+                  style={styles.searchResultItem}
+                  onPress={() => {
+                    if (product?.id) {
+                      handleProductClick(product);
+                      setIsSearching(false);
+                      setSearchQuery('');
+                    }
+                  }}
+                >
+                  <SafeImage 
+                    source={{ uri: productImage }} 
+                    style={styles.searchResultImage}
+                  />
+                  <View style={styles.searchResultInfo}>
+                    <Text style={styles.searchResultName} numberOfLines={2}>
+                      {productName}
+                    </Text>
+                    <Text style={styles.searchResultPrice}>
+                      ${formatPrice(displayPrice)}
+                    </Text>
+                    {product?.category && (
+                      <Text style={styles.searchResultCategory}>{product.category}</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+      )}
+
+      {!isSearching && !showWishlistProducts && (
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Error Message */}
           {error && (
@@ -537,39 +949,29 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Data Status */}
-          <View style={styles.statusContainer}>
-            <Text style={styles.statusText}>
-              📱 {products.length} products in {categories.length} categories
-            </Text>
-            {(loading.products || loading.categories) && (
-              <ActivityIndicator size="small" color="#FF9900" style={{ marginLeft: 10 }} />
-            )}
-          </View>
-
-          {/* Banner */}
+          {/* Enhanced Banner */}
           <View style={styles.banner}>
             <SafeImage
-              source={{ uri: 'https://images.unsplash.com/photo-1607082350899-7e105aa886ae?w=400' }}
+              source={{ uri: 'https://smartg5.com/img/hotelsection.png' }}
               style={styles.bannerImage}
-              showPlaceholder={false}
+              resizeMode="cover"
             />
             <View style={styles.bannerOverlay}>
-              <Text style={styles.bannerTitle}>SmartG5 Products</Text>
-              <Text style={styles.bannerSubtitle}>Smart Hotel & GRMS Solutions</Text>
+              <Text style={styles.bannerTitle}>Smart Hotel Solutions</Text>
+              <Text style={styles.bannerSubtitle}>Premium GRMS & Hotel Technology</Text>
             </View>
           </View>
 
           {/* Categories */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Shop by Category</Text>
+            <Text style={styles.sectionTitle}>🏷️ Shop by Category</Text>
             {loading.categories ? (
               <ActivityIndicator size="large" color="#FF9900" style={styles.loader} />
             ) : (
               <FlatList
                 data={categories}
                 renderItem={renderCategory}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item?.id?.toString() || Math.random().toString()}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.categoriesList}
@@ -586,7 +988,7 @@ export default function HomeScreen() {
           {/* Featured Products */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Featured Products</Text>
+              <Text style={styles.sectionTitle}>✨ Featured Products</Text>
               <TouchableOpacity onPress={() => router.push('/(tabs)/all-products')}>
                 <Text style={styles.seeAllText}>See all</Text>
               </TouchableOpacity>
@@ -595,9 +997,9 @@ export default function HomeScreen() {
               <ActivityIndicator size="large" color="#FF9900" style={styles.loader} />
             ) : (
               <FlatList
-                data={products.slice(0, 4)}
+                data={products.slice(0, 6)}
                 renderItem={renderProduct}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item?.id?.toString() || Math.random().toString()}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.productsList}
@@ -605,17 +1007,16 @@ export default function HomeScreen() {
                   <View style={styles.emptyContainer}>
                     <Ionicons name="cube-outline" size={40} color="#ccc" />
                     <Text style={styles.emptyText}>No products available</Text>
-                    <Text style={styles.emptySubtext}>Pull down to refresh</Text>
                   </View>
                 }
               />
             )}
           </View>
 
-          {/* Today's Deals */}
+          {/* Today's Deals - FIXED CLICK HANDLER */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Today's Deals</Text>
+              <Text style={styles.sectionTitle}>🔥 Today's Deals</Text>
               <TouchableOpacity onPress={() => router.push('/(tabs)/sale')}>
                 <Text style={styles.seeAllText}>See all</Text>
               </TouchableOpacity>
@@ -625,22 +1026,23 @@ export default function HomeScreen() {
             ) : (
               <View style={styles.dealsGrid}>
                 {products
-                  .filter(p => p.discount_percentage > 0 || p.discount > 0)
+                  .filter(p => p?.discount_percentage > 0 || p?.discount > 0)
                   .slice(0, 4)
-                  .map(product => {
-                    const productImage = product.image || product.images?.[0] || null;
+                  .map((product, index) => {
+                    if (!product) return null;
+                    const productImage = product?.image || product?.images?.[0] || null;
                     const displayPrice = getDisplayPrice(product);
-                    const discount = product.discount_percentage || product.discount || 0;
+                    const discount = product?.discount_percentage || product?.discount || 0;
                     return (
                       <TouchableOpacity 
-                        key={product.id} 
+                        key={product?.id?.toString() || index.toString()}
                         style={styles.dealCard}
-                        onPress={() => router.push(`/product/${product.id}`)}
+                        onPress={() => handleProductClick(product)}
                       >
                         <SafeImage 
                           source={{ uri: productImage }} 
                           style={styles.dealImage}
-                          showPlaceholder={true}
+                          resizeMode="cover"
                         />
                         {discount > 0 && (
                           <View style={styles.dealBadge}>
@@ -648,18 +1050,18 @@ export default function HomeScreen() {
                           </View>
                         )}
                         <Text style={styles.dealName} numberOfLines={2}>
-                          {product.name || product.title}
+                          {product?.name || product?.title}
                         </Text>
                         <View style={styles.dealPriceContainer}>
                           <Text style={styles.dealPrice}>${formatPrice(displayPrice)}</Text>
-                          {discount > 0 && product.price && (
+                          {discount > 0 && product?.price && (
                             <Text style={styles.dealOriginalPrice}>${formatPrice(product.price)}</Text>
                           )}
                         </View>
                       </TouchableOpacity>
                     );
                   })}
-                {products.filter(p => p.discount_percentage > 0 || p.discount > 0).length === 0 && (
+                {products.filter(p => p?.discount_percentage > 0 || p?.discount > 0).length === 0 && (
                   <View style={styles.emptyContainer}>
                     <Ionicons name="pricetag-outline" size={40} color="#ccc" />
                     <Text style={styles.emptyText}>No deals available</Text>
@@ -712,127 +1114,185 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#EAEDED',
+    backgroundColor: '#f8f9fa',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#131921',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
+    backgroundColor: '#1a1a2e',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  logoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   logo: {
+    fontSize: 24,
+    marginRight: 8,
+  },
+  logoText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: 'bold',
+    letterSpacing: 1,
   },
   headerIcons: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
   iconButton: {
     marginLeft: 15,
     position: 'relative',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    padding: 8,
   },
   badge: {
     position: 'absolute',
     top: -5,
     right: -5,
-    backgroundColor: '#FF9900',
+    backgroundColor: '#ff4757',
     borderRadius: 10,
-    width: 18,
-    height: 18,
+    width: 20,
+    height: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
   },
   badgeText: {
     color: '#fff',
     fontSize: 10,
     fontWeight: 'bold',
   },
-  refreshButton: {
-    backgroundColor: '#4CAF50',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 10,
-    marginHorizontal: 15,
-    marginBottom: 10,
-    borderRadius: 8,
-  },
-  refreshButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
-    marginLeft: 8,
-  },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-    marginHorizontal: 15,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: 8,
-  },
-  statusText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
     margin: 15,
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: 25,
+    paddingHorizontal: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  searchIcon: {
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 16,
   },
-  searchButton: {
+  clearButton: {
     padding: 5,
+  },
+  imagePlaceholder: {
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    color: '#999',
+    fontSize: 12,
+    marginTop: 5,
+  },
+  imageLoading: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+  },
+  wishlistSection: {
+    backgroundColor: '#fff',
+    margin: 15,
+    borderRadius: 15,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  closeText: {
+    color: '#ff4757',
+    fontWeight: 'bold',
+  },
+  emptyWishlist: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  emptyWishlistText: {
+    fontSize: 18,
+    color: '#666',
+    marginTop: 10,
+    fontWeight: '500',
+  },
+  emptyWishlistSubtext: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  wishlistProductsList: {
+    paddingVertical: 10,
   },
   searchResultsContainer: {
     backgroundColor: '#fff',
     margin: 15,
-    borderRadius: 8,
-    padding: 10,
+    borderRadius: 15,
+    padding: 15,
     maxHeight: 300,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
   },
   searchResultsTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 10,
+    marginBottom: 15,
+    color: '#1a1a2e',
   },
   searchResultItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
   searchResultImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 4,
-    marginRight: 10,
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    marginRight: 15,
   },
   searchResultInfo: {
     flex: 1,
   },
   searchResultName: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '500',
+    color: '#1a1a2e',
   },
   searchResultPrice: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#B12704',
     fontWeight: 'bold',
+    marginTop: 2,
   },
   searchResultCategory: {
     fontSize: 12,
@@ -841,9 +1301,14 @@ const styles = StyleSheet.create({
   },
   banner: {
     marginHorizontal: 15,
-    borderRadius: 12,
+    borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
   },
   bannerImage: {
     width: '100%',
@@ -855,37 +1320,41 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    padding: 15,
+    padding: 20,
   },
   bannerTitle: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
+    textAlign: 'center',
   },
   bannerSubtitle: {
     color: '#FF9900',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 5,
   },
   section: {
-    marginVertical: 10,
+    marginVertical: 15,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 15,
-    marginBottom: 10,
+    marginBottom: 15,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#131921',
+    color: '#1a1a2e',
     paddingHorizontal: 15,
   },
   seeAllText: {
     color: '#0066c0',
-    fontWeight: '500',
+    fontWeight: '600',
+    fontSize: 14,
   },
   categoriesList: {
     paddingHorizontal: 10,
@@ -893,10 +1362,10 @@ const styles = StyleSheet.create({
   categoryItem: {
     alignItems: 'center',
     backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    marginHorizontal: 5,
-    minWidth: 90,
+    padding: 15,
+    borderRadius: 15,
+    marginHorizontal: 8,
+    minWidth: 100,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -904,132 +1373,143 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   categoryIconImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginBottom: 5,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginBottom: 8,
   },
   categoryText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     textAlign: 'center',
-    maxWidth: 80,
+    maxWidth: 90,
+    color: '#1a1a2e',
   },
   categoryCount: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#666',
-    marginTop: 2,
+    marginTop: 4,
   },
   productsList: {
     paddingHorizontal: 10,
   },
   productCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 10,
-    marginHorizontal: 5,
-    width: 160,
+    borderRadius: 15,
+    padding: 12,
+    marginHorizontal: 8,
+    width: 170,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 8,
+    elevation: 5,
     position: 'relative',
   },
   productImage: {
     width: '100%',
-    height: 120,
-    borderRadius: 8,
-    marginBottom: 8,
+    height: 130,
+    borderRadius: 12,
   },
   wishlistButton: {
     position: 'absolute',
-    top: 15,
-    right: 15,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius: 15,
-    padding: 5,
+    top: 20,
+    right: 20,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 20,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
   },
   discountBadge: {
     position: 'absolute',
-    top: 15,
-    left: 15,
-    backgroundColor: '#B12704',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+    top: 20,
+    left: 20,
+    backgroundColor: '#ff4757',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   discountBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   productName: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 4,
-    height: 36,
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+    height: 40,
+    color: '#1a1a2e',
   },
   ratingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   rating: {
-    marginLeft: 4,
-    fontSize: 12,
+    marginLeft: 6,
+    fontSize: 13,
     color: '#666',
   },
   priceContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   productPrice: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#B12704',
   },
   originalPrice: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#999',
     textDecorationLine: 'line-through',
-    marginLeft: 6,
+    marginLeft: 8,
   },
   fastDeliveryBadge: {
     backgroundColor: '#FFD814',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     alignSelf: 'flex-start',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   fastDeliveryText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 'bold',
     color: '#131921',
   },
   categoryBadge: {
     backgroundColor: '#f0f0f0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     alignSelf: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   categoryBadgeText: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#666',
   },
   addToCartBtn: {
     backgroundColor: '#FFD814',
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingVertical: 10,
+    borderRadius: 25,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   addToCartText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#131921',
   },
   dealsGrid: {
@@ -1040,57 +1520,57 @@ const styles = StyleSheet.create({
   },
   dealCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    width: (width - 40) / 2,
-    marginBottom: 10,
-    padding: 10,
+    borderRadius: 15,
+    width: (width - 50) / 2,
+    marginBottom: 15,
+    padding: 12,
     position: 'relative',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   dealImage: {
     width: '100%',
-    height: 120,
-    borderRadius: 8,
-    marginBottom: 8,
+    height: 130,
+    borderRadius: 12,
   },
   dealBadge: {
     position: 'absolute',
-    top: 15,
-    left: 15,
-    backgroundColor: '#B12704',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+    top: 20,
+    left: 20,
+    backgroundColor: '#ff4757',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   dealBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   dealName: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 4,
-    height: 36,
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+    height: 40,
+    color: '#1a1a2e',
   },
   dealPriceContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   dealPrice: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#B12704',
   },
   dealOriginalPrice: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#999',
     textDecorationLine: 'line-through',
-    marginLeft: 6,
+    marginLeft: 8,
   },
   modalOverlay: {
     flex: 1,
@@ -1101,38 +1581,39 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginTop: 50,
     marginHorizontal: 20,
-    borderRadius: 12,
-    padding: 20,
+    borderRadius: 20,
+    padding: 25,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowRadius: 8,
+    elevation: 10,
   },
   menuTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 25,
     textAlign: 'center',
-    color: '#131921',
+    color: '#1a1a2e',
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
   menuItemText: {
-    fontSize: 16,
-    marginLeft: 15,
-    color: '#131921',
+    fontSize: 18,
+    marginLeft: 20,
+    color: '#1a1a2e',
+    fontWeight: '500',
   },
   errorContainer: {
     backgroundColor: '#ffebee',
-    padding: 15,
+    padding: 20,
     margin: 15,
-    borderRadius: 8,
+    borderRadius: 12,
     borderLeftWidth: 4,
     borderLeftColor: '#f44336',
     flexDirection: 'row',
@@ -1140,15 +1621,15 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: '#c62828',
-    fontSize: 14,
-    marginLeft: 10,
+    fontSize: 16,
+    marginLeft: 15,
     flex: 1,
   },
   retryText: {
     color: '#0066c0',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: 'bold',
-    marginLeft: 10,
+    marginLeft: 15,
   },
   loader: {
     padding: 20,
@@ -1162,13 +1643,8 @@ const styles = StyleSheet.create({
   emptyText: {
     textAlign: 'center',
     color: '#666',
-    marginTop: 10,
-    fontSize: 16,
-  },
-  emptySubtext: {
-    textAlign: 'center',
-    color: '#999',
-    marginTop: 5,
-    fontSize: 14,
+    marginTop: 15,
+    fontSize: 18,
+    fontWeight: '500',
   },
 });
